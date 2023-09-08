@@ -1,0 +1,104 @@
+name: wp install debug
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Allow ddev get to use a GitHub token to prevent rate limiting by tests
+  DDEV_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  wp-install-debug:
+    strategy:
+      fail-fast: false
+      matrix:
+        wp-version: [ "4.9", "5.0", "5.2", "5.4", "5.6", "5.8", "6.0", "6.1", "6.2", "6.3" ]
+        php-version: [ "7.2" ]
+        exclude:
+          - { php-version: "7.4", wp-version: "4.9" }
+          - { php-version: "7.4", wp-version: "5.0" }
+          - { php-version: "7.4", wp-version: "5.2" }
+
+    name: wp install debug
+    runs-on: ubuntu-latest
+
+
+    steps:
+
+      - name: Install DDEV
+        # @see https://ddev.readthedocs.io/en/stable/#installationupgrade-script-linux-and-macos-armarm64-and-amd64-architectures
+        run: |
+          curl -fsSL https://apt.fury.io/drud/gpg.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/ddev.gpg > /dev/null
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/ddev.gpg] https://apt.fury.io/drud/ * *" | sudo tee /etc/apt/sources.list.d/ddev.list
+          sudo apt-get -q update
+          sudo apt-get -q -y install libnss3-tools ddev
+          mkcert -install
+          ddev config global --instrumentation-opt-in=false --omit-containers=ddev-ssh-agent
+
+
+      - name: Set WP_VERSION_CODE env
+        # used in some directory path and conventional file naming
+        # Example : 5.6.5 => wp565
+        run: |
+          echo "WP_VERSION_CODE=$(echo wp${{ matrix.wp-version }} | sed 's/\.//g' )" >> $GITHUB_ENV
+
+      - name: Create empty WordPress DDEV project (with Apache)
+        run: ddev config --project-type=wordpress --project-name=${{ env.WP_VERSION_CODE }} --php-version=${{ matrix.php-version }} --webserver-type=apache-fpm
+
+
+      - name: Start DDEV
+        run: ddev start
+
+      - name: Download WordPress
+        run: ddev wp core download --version=${{ matrix.wp-version }}
+
+      - name: Setup WordPress ${{ matrix.wp-version }} with PHP ${{ matrix.php-version }}
+        run: |
+          ddev wp core install --url='https://${{ env.WP_VERSION_CODE }}.ddev.site' --title='WordPress' --admin_user='admin' --admin_password='admin123' --admin_email='admin@admin.com'
+
+      - name: Check current version just after install
+        run: |
+          CURRENT_VERSION=$(ddev wp core version)
+          if [[ $CURRENT_VERSION == *"${{ matrix.wp-version }}"* ]]
+          then
+              echo "Tested version was as expected"
+              echo $CURRENT_VERSION
+              echo ${{ matrix.wp-version }}
+              exit 0
+          else
+              echo "Tested version was not as expected"
+              echo $CURRENT_VERSION
+              echo ${{ matrix.wp-version }}
+              exit 1
+          fi
+
+      - name: Access login page
+        run: | 
+          curl https://${{ env.WP_VERSION_CODE }}.ddev.site/wp-admin
+
+      - name: Wait some time
+        run: sleep 20s
+
+      - name: Check current version after some delay
+        run: |
+          CURRENT_VERSION=$(ddev wp core version)
+          if [[ $CURRENT_VERSION == *"${{ matrix.wp-version }}"* ]]
+          then
+              echo "Tested version was as expected"
+              echo $CURRENT_VERSION
+              echo ${{ matrix.wp-version }}
+              exit 0
+          else
+              echo "Tested version was not as expected"
+              echo $CURRENT_VERSION
+              echo ${{ matrix.wp-version }}
+              exit 1
+          fi
+
